@@ -7,31 +7,33 @@ Este documento describe el diseño detallado de la base de datos relacional para
 ## 1. Objetivo
 
 El objetivo de este diseño es establecer una estructura de base de datos relacional normalizada y optimizada para la aplicación "Gestor de Cobranzas". Esta base de datos permitirá:
-*   Administrar clientes, operaciones (créditos) y cuotas sin duplicados.
-*   Importar carteras mensuales y realizar sincronizaciones posteriores (detectando registros nuevos, actualizados y ausentes/pagados en el sistema oficial).
-*   Garantizar la separación estricta entre la información financiera provista por el sistema oficial y la información de valor agregada por los gestores de la aplicación.
+*   Administrar clientes, operaciones (créditos completos) y cuotas sin duplicados.
+*   Importar carteras mensuales y realizar sincronizaciones posteriores (detectando registros nuevos, actualizados y ausencias en el archivo de importación posterior sin asumir automáticamente un pago).
+*   Garantizar la separación estricta entre la información financiera provista por el sistema oficial y la información de valor agregada por los gestores de la aplicación (los datos internos/manuales no se sobrescriben).
+*   Registrar de manera histórica la presencia de cada cuota en las sucesivas importaciones, así como la evolución de sus punitorios oficiales.
+*   Mapear con precisión la contabilidad de los pagos (diferenciando importe original, punitorios teóricos, total actualizado, monto efectivamente cobrado, punitorios perdonados y el manejo de pagos parciales).
 *   Registrar de manera histórica todas las gestiones de cobranza, promesas de pago, visitas presenciales de cobradores y plantillas de mensajes.
-*   Mapear con precisión la contabilidad de los pagos (diferenciando importe original, punitorios teóricos, total actualizado, monto efectivamente cobrado y punitorios perdonados).
 *   Soportar operaciones multiusuario y auditoría básica de cambios.
 
 ---
 
-## 2. Entidades
+## 2. Entidades y Estructura de Datos
 
-El modelo se compone de las siguientes **12 entidades principales**:
+El modelo se compone de las siguientes **13 entidades principales**:
 
 1.  **`users`**: Representa a los usuarios del sistema (administradores, gestores y cobradores) con roles específicos.
 2.  **`clientes`**: Información personal y de contacto del cliente (persona física).
-3.  **`operaciones`**: Representa la solicitud o crédito otorgado por la financiera.
-4.  **`periodos_cobranza`**: Representa el ciclo o cartera de un mes específico (ej. Agosto 2026), sirviendo de base para los objetivos y estadísticas del dashboard.
-5.  **`importaciones`**: Registro de auditoría de cada archivo importado por el sistema.
-6.  **`cuotas`**: El núcleo financiero de la gestión. Representa cada cuota/vencimiento particular de una operación asociado a un periodo de cobranza.
-7.  **`detalle_importaciones`**: Tabla de auditoría detallada que registra exactamente qué acción y qué cambios de valores ocurrieron con cada cuota durante una sincronización.
-8.  **`gestiones`**: Historial de contactos e intentos de comunicación con el cliente para cada cuota.
-9.  **`promesas_pago`**: Compromisos de pago asumidos por el cliente para una cuota.
-10. **`pagos`**: Registro detallado de cobros e ingresos reales ingresados por los usuarios.
-11. **`visitas_cobrador`**: Solicitudes y resultados de las gestiones presenciales/domiciliarias de cobradores.
-12. **`plantillas_mensajes`**: Mensajes predefinidos con variables dinámicas para automatizar el contacto con clientes.
+3.  **`operaciones`**: Representa el **CRÉDITO COMPLETO** u operación otorgada por la financiera (por ejemplo, "Número de solicitud: 2455"). No pertenece a un periodo mensual específico y se mantiene única para toda la vida del crédito.
+4.  **`cuotas`**: Obligaciones individuales dentro de una operación. Su identidad lógica es `operacion_id + numero_cuota` (ej. Solicitud 2455 — Cuota 5). **No** pertenece directamente a un período de cobranza, ya que la cuota mantiene su identidad a lo largo del tiempo si continúa impaga.
+5.  **`periodos_cobranza`**: Representa el ciclo mensual de trabajo de cobranza (ej. "Agosto 2026"), sirviendo de base para los objetivos y estadísticas del dashboard.
+6.  **`importaciones`**: Registro de auditoría de cada archivo importado por el sistema, asociado a un período de cobranza.
+7.  **`cuota_importaciones`**: Entidad de relación que registra la **aparición y estado oficial de una cuota en una importación específica**, conservando los valores oficiales observados en ese momento exacto. Permite reconstruir el historial de punitorios oficiales.
+8.  **`detalle_importaciones`**: Registro detallado de nivel de ejecución y auditoría de la importación (ej. errores de validación de filas, acciones de creación, actualización o registro de estado).
+9.  **`gestiones`**: Historial de contactos e intentos de comunicación con el cliente para cada cuota.
+10. **`promesas_pago`**: Compromisos de pago asumidos por el deudor.
+11. **`pagos`**: Registro detallado de cobros e ingresos reales ingresados por los usuarios, con soporte para pagos parciales y condonación de punitorios.
+12. **`visitas_cobrador`**: Solicitudes y resultados de las gestiones presenciales/domiciliarias de cobradores.
+13. **`plantillas_mensajes`**: Mensajes predefinidos con variables dinámicas para automatizar el contacto con clientes.
 
 ---
 
@@ -53,7 +55,7 @@ Tabla por defecto de Laravel extendida para soportar roles y trazabilidad.
 | `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
 
 ### `clientes`
-Almacena los datos personales del deudor.
+Almacena los datos de contacto y de gestión interna del deudor.
 
 | Campo | Tipo | Nulabilidad | Descripción |
 | :--- | :--- | :--- | :--- |
@@ -61,26 +63,46 @@ Almacena los datos personales del deudor.
 | `nombre` | VARCHAR(255) | NOT NULL | Nombre del cliente. |
 | `apellido` | VARCHAR(255) | NOT NULL | Apellido del cliente. |
 | `documento` | VARCHAR(50) | NULL | DNI, CUIL o pasaporte. Indexado para búsquedas rápidas. |
-| `telefono` | VARCHAR(100) | NULL | Número de contacto de gestión (puede actualizarse manualmente). |
-| `domicilio` | TEXT | NULL | Dirección física de gestión. |
+| `telefono` | VARCHAR(100) | NULL | Número de contacto de gestión (mantenido manualmente, no se destruye por importaciones). |
+| `domicilio` | TEXT | NULL | Dirección física de gestión (mantenida manualmente, no se destruye por importaciones). |
 | `email` | VARCHAR(255) | NULL | Correo electrónico de contacto secundario. |
 | `codigo_cliente_oficial` | VARCHAR(100) | NULL | Código de cliente proveniente del sistema financiero (si existe). |
 | `created_at` | TIMESTAMP | NULL | Fecha de creación. |
 | `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
 
 ### `operaciones`
-Representa el crédito global.
+Representa la operación de crédito global única (un único crédito completo).
 
 | Campo | Tipo | Nulabilidad | Descripción |
 | :--- | :--- | :--- | :--- |
 | `id` | BIGINT UNSIGNED | NOT NULL | Clave primaria autoincremental. |
 | `cliente_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `clientes.id`. |
-| `numero_solicitud` | VARCHAR(100) | NOT NULL | Identificador único del crédito en el sistema oficial. |
+| `numero_solicitud` | VARCHAR(100) | NOT NULL | Identificador único del crédito completo (ej: "2455") en el sistema oficial (Único en DB). |
+| `created_at` | TIMESTAMP | NULL | Fecha de creación. |
+| `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
+
+### `cuotas`
+Obligaciones individuales asociadas a una operación de crédito. Su identidad se define por `operacion_id` + `numero_cuota`. No pertenece a un período o importación de manera fija.
+
+| Campo | Tipo | Nulabilidad | Descripción |
+| :--- | :--- | :--- | :--- |
+| `id` | BIGINT UNSIGNED | NOT NULL | Clave primaria autoincremental. |
+| `operacion_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `operaciones.id`. |
+| `numero_cuota` | INT | NOT NULL | Número correlativo de cuota (ej: 1, 2, 5, etc.). |
+| `dia_cobro` | TINYINT UNSIGNED | NOT NULL | Día sugerido de cobro / sueldo (1 al 31) observado. |
+| `importe_original` | DECIMAL(15,2) | NOT NULL | Capital o cuota base del sistema oficial. |
+| `punitorios` | DECIMAL(15,2) | NOT NULL | Interés punitorio oficial acumulado según última sincronización. |
+| `total_actualizado` | DECIMAL(15,2) | NOT NULL | Sumatoria oficial actual: `importe_original` + `punitorios`. |
+| `saldo_pendiente` | DECIMAL(15,2) | NOT NULL | El saldo financiero pendiente neto que el cliente adeuda internamente después de pagos parciales. |
+| `estado_financiero`| VARCHAR(50) | NOT NULL | Estado contable de la cuota (`pendiente`, `ausente_en_ultima_importacion`, `pago_realizado_oficial`, `cancelada`). |
+| `estado_gestion`    | VARCHAR(50) | NOT NULL | Estado de gestión diario del equipo (`sin_contactar`, `contactado`, `promesa_pendiente`, `promesa_incumplida`, `visita_solicitada`, `seguimiento`, `cobrado`). |
+| `prioridad` | VARCHAR(50) | NOT NULL | Prioridad calculada de atención (`critica`, `alta`, `media`, `baja`). |
+| `link_pago` | VARCHAR(500) | NULL | URL del botón o enlace de pago electrónico generado. |
 | `created_at` | TIMESTAMP | NULL | Fecha de creación. |
 | `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
 
 ### `periodos_cobranza`
-Representa el ciclo o cartera mensual. Permite segmentar deudas y generar históricos mensuales cerrados.
+Representa el ciclo u objetivo mensual de cobranza.
 
 | Campo | Tipo | Nulabilidad | Descripción |
 | :--- | :--- | :--- | :--- |
@@ -94,7 +116,7 @@ Representa el ciclo o cartera mensual. Permite segmentar deudas y generar histó
 | `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
 
 ### `importaciones`
-Registro de la carga de archivos.
+Registro de auditoría de la carga de archivos oficiales, asociada a un periodo de cobranza de trabajo.
 
 | Campo | Tipo | Nulabilidad | Descripción |
 | :--- | :--- | :--- | :--- |
@@ -107,51 +129,43 @@ Registro de la carga de archivos.
 | `cantidad_registros` | INT | NOT NULL | Total de filas procesadas en el archivo. |
 | `registros_nuevos` | INT | NOT NULL | Cantidad de cuotas creadas. |
 | `registros_actualizados` | INT | NOT NULL | Cantidad de cuotas cuyos montos oficiales fueron actualizados. |
-| `registros_ausentes` | INT | NOT NULL | Cuotas de este periodo que ya no vinieron y se marcaron como oficiales. |
+| `registros_ausentes` | INT | NOT NULL | Cantidad de cuotas ausentes identificadas en esta importación específica. |
 | `registros_errores` | INT | NOT NULL | Cantidad de filas con fallos de validación. |
 | `estado` | VARCHAR(50) | NOT NULL | Estado final (`procesando`, `completada`, `fallida`). |
 | `created_at` | TIMESTAMP | NULL | Fecha de creación. |
 | `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
 
-### `cuotas`
-El corazón dinámico del negocio. Enlaza operaciones, periodos y define el estado actual de la cobranza.
+### `cuota_importaciones`
+Registra la presencia de una cuota en una importación y retiene los valores financieros oficiales observados en ese momento de cara a la evolución histórica de punitorios y auditoría de presencias.
 
 | Campo | Tipo | Nulabilidad | Descripción |
 | :--- | :--- | :--- | :--- |
 | `id` | BIGINT UNSIGNED | NOT NULL | Clave primaria autoincremental. |
-| `operacion_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `operaciones.id`. |
-| `periodo_cobranza_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `periodos_cobranza.id`. |
-| `numero_cuota` | INT | NOT NULL | Número correlativo de cuota (ej: 1, 2, 3). |
-| `dia_cobro` | TINYINT UNSIGNED | NOT NULL | Día sugerido de cobro / sueldo (1 al 31). |
-| `importe_original` | DECIMAL(15,2) | NOT NULL | Capital o cuota base del sistema oficial. |
-| `punitorios` | DECIMAL(15,2) | NOT NULL | Interés punitorio actualizado según última planilla oficial. |
-| `total_actualizado` | DECIMAL(15,2) | NOT NULL | Sumatoria oficial: `importe_original` + `punitorios`. |
-| `estado` | VARCHAR(50) | NOT NULL | Estado actual de gestión de la cuota (ver sección de Decisiones). |
-| `prioridad` | VARCHAR(50) | NOT NULL | Prioridad calculada de atención (`critica`, `alta`, `media`, `baja`). |
-| `link_pago` | VARCHAR(500) | NULL | URL del botón o enlace de pago electrónico generado. |
+| `cuota_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `cuotas.id`. |
+| `importacion_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `importaciones.id`. |
+| `importe_original_observado` | DECIMAL(15,2) | NOT NULL | El importe original oficial observado en esta importación. |
+| `punitorios_observados` | DECIMAL(15,2) | NOT NULL | El interés punitorio oficial observado en esta importación. |
+| `total_actualizado_observado` | DECIMAL(15,2) | NOT NULL | El total oficial observado (`importe_original` + `punitorios`) en este archivo. |
+| `dia_cobro_observado` | TINYINT UNSIGNED | NULL | El día de cobro observado en esta importación (si corresponde). |
+| `estado_presencia` | VARCHAR(50) | NOT NULL | Indica si la cuota estuvo `'presente'` o `'ausente_en_importacion'` en esta importación particular. |
 | `created_at` | TIMESTAMP | NULL | Fecha de creación. |
 | `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
 
 ### `detalle_importaciones`
-Bitácora de auditoría detallada de cada sincronización.
+Bitácora de auditoría detallada a nivel técnico para registrar fallos o acciones de procesamiento de filas individuales de un archivo de importación.
 
 | Campo | Tipo | Nulabilidad | Descripción |
 | :--- | :--- | :--- | :--- |
 | `id` | BIGINT UNSIGNED | NOT NULL | Clave primaria autoincremental. |
 | `importacion_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `importaciones.id`. |
-| `cuota_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `cuotas.id`. |
-| `accion` | VARCHAR(50) | NOT NULL | Acción realizada (`creado`, `actualizado_punitorios`, `actualizado_importe`, `marcado_pagado_oficial`, `error`). |
-| `importe_original_anterior` | DECIMAL(15,2) | NULL | Valor anterior del importe original (para auditoría). |
-| `importe_original_nuevo` | DECIMAL(15,2) | NULL | Nuevo valor del importe original. |
-| `punitorios_anterior` | DECIMAL(15,2) | NULL | Valor anterior del punitorio. |
-| `punitorios_nuevo` | DECIMAL(15,2) | NULL | Nuevo valor del punitorio. |
-| `estado_anterior` | VARCHAR(50) | NULL | Estado anterior de la cuota. |
-| `estado_nuevo` | VARCHAR(50) | NULL | Estado asignado. |
-| `detalles_error` | TEXT | NULL | Descripción del error si la fila falló en procesarse. |
+| `numero_linea` | INT | NOT NULL | Número de línea/fila del archivo físico con el problema o acción. |
+| `accion` | VARCHAR(50) | NOT NULL | Acción realizada (`creado`, `actualizado_punitorios`, `actualizado_importe`, `marcado_ausente`, `error`). |
+| `detalles_error` | TEXT | NULL | Descripción detallada del error si la fila falló en procesarse (ej: formato inválido). |
+| `datos_crudos` | TEXT | NULL | JSON con los datos de la fila que causó el error para facilitar el diagnóstico. |
 | `created_at` | TIMESTAMP | NULL | Fecha de creación. |
 
 ### `gestiones`
-Historial cronológico de interacciones de cobranza.
+Historial cronológico de interacciones de cobranza con el cliente (no se sobrescribe).
 
 | Campo | Tipo | Nulabilidad | Descripción |
 | :--- | :--- | :--- | :--- |
@@ -159,8 +173,8 @@ Historial cronológico de interacciones de cobranza.
 | `cuota_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `cuotas.id`. |
 | `user_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `users.id` (gestor a cargo). |
 | `fecha_hora` | TIMESTAMP | NOT NULL | Momento exacto de la interacción. |
-| `tipo` | VARCHAR(50) | NOT NULL | Canal de contacto (ej: `whatsapp_enviado`, `llamada_realizada`, etc.). |
-| `resultado` | VARCHAR(50) | NOT NULL | Consecuencia directa (ej: `no_atendio`, `prometio_pagar`, `solicito_cobrador`). |
+| `tipo` | VARCHAR(50) | NOT NULL | Canal de contacto (ej: `whatsapp_enviado`, `whatsapp_respondido`, `llamada_realizada`, `no_respondio`). |
+| `resultado` | VARCHAR(50) | NOT NULL | Consecuencia directa (ej: `no_atendio`, `prometio_pagar`, `solicito_cobrador`, `promesa_incumplida`, `seguimiento`, `cliente_pago`). |
 | `observacion` | TEXT | NULL | Comentarios específicos agregados por el gestor. |
 | `proxima_accion` | VARCHAR(100) | NULL | Próximo paso planificado (ej: `volver_a_llamar`, `verificar_pago`). |
 | `proxima_accion_fecha` | DATE | NULL | Fecha límite en que se debe disparar la próxima acción. |
@@ -168,7 +182,7 @@ Historial cronológico de interacciones de cobranza.
 | `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
 
 ### `promesas_pago`
-Gestión de promesas. Pueden registrarse múltiples promesas históricas para una misma cuota.
+Registro histórico de compromisos de pago asumidos por el deudor. Permite evaluar su comportamiento a lo largo del tiempo.
 
 | Campo | Tipo | Nulabilidad | Descripción |
 | :--- | :--- | :--- | :--- |
@@ -181,66 +195,67 @@ Gestión de promesas. Pueden registrarse múltiples promesas históricas para un
 | `monto_prometido` | DECIMAL(15,2) | NULL | Monto que se comprometió a abonar. |
 | `estado` | VARCHAR(50) | NOT NULL | Estado (`pendiente`, `cumplida`, `incumplida`, `cancelada`). |
 | `fecha_resolucion` | TIMESTAMP | NULL | Momento en el que cambió a cumplida, incumplida o cancelada. |
-| `observaciones` | TEXT | NULL | Detalles adicionales. |
+| `observaciones` | TEXT | NULL | Detalles adicionales de la promesa de pago. |
 | `created_at` | TIMESTAMP | NULL | Fecha de creación. |
 | `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
 
 ### `pagos`
-Contabilidad exacta de los pagos efectivamente registrados en la aplicación.
+Contabilidad exacta de ingresos registrados en la aplicación para una cuota. Soporta cobros totales, condonación de intereses y cobros parciales.
 
 | Campo | Tipo | Nulabilidad | Descripción |
 | :--- | :--- | :--- | :--- |
 | `id` | BIGINT UNSIGNED | NOT NULL | Clave primaria autoincremental. |
 | `cuota_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `cuotas.id`. |
 | `user_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `users.id` (quién registró el cobro). |
-| `fecha_pago` | TIMESTAMP | NOT NULL | Fecha y hora reales de realización del pago. |
-| `importe_original` | DECIMAL(15,2) | NOT NULL | Captura del `importe_original` oficial al momento de pagar. |
-| `punitorios_existentes` | DECIMAL(15,2) | NOT NULL | Captura de los `punitorios` oficiales acumulados al momento. |
-| `total_actualizado` | DECIMAL(15,2) | NOT NULL | Captura del `total_actualizado` oficial al momento del pago. |
-| `monto_cobrado` | DECIMAL(15,2) | NOT NULL | Monto neto recibido. |
-| `punitorios_perdonados` | DECIMAL(15,2) | NOT NULL | Diferencia / Condonación oficial otorgada (`total_actualizado` - `monto_cobrado`). |
+| `fecha_pago` | TIMESTAMP | NOT NULL | Fecha y hora de realización del pago. |
+| `importe_original_snapshot` | DECIMAL(15,2) | NOT NULL | Captura del `importe_original` oficial de la cuota al momento del pago. |
+| `punitorios_snapshot` | DECIMAL(15,2) | NOT NULL | Captura de los `punitorios` oficiales acumulados al momento. |
+| `total_actualizado_snapshot` | DECIMAL(15,2) | NOT NULL | Captura de la deuda oficial de la cuota al momento del pago. |
+| `monto_cobrado` | DECIMAL(15,2) | NOT NULL | Monto efectivamente recibido de este deudor. |
+| `punitorios_perdonados` | DECIMAL(15,2) | NOT NULL | Interés perdonado (condonación explícita) registrado en esta transacción. |
+| `es_cancelatorio` | BOOLEAN | NOT NULL | Indica si el pago liquida definitivamente la cuota (`true`) o es un pago parcial (`false`). |
 | `medio_pago` | VARCHAR(50) | NOT NULL | Método de ingreso (`efectivo`, `transferencia`, `cobrador`, `tarjeta`). |
-| `observaciones` | TEXT | NULL | Notas adicionales de auditoría o recibos. |
+| `observaciones` | TEXT | NULL | Notas de auditoría, recibo o comprobante de la transacción. |
 | `created_at` | TIMESTAMP | NULL | Fecha de creación. |
 | `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
 
 ### `visitas_cobrador`
-Asignaciones y registros de visitas domiciliarias físicas.
+Registro de visitas presenciales. La relación con la cuota es opcional para soportar visitas preventivas "al día" o globales por cliente.
 
 | Campo | Tipo | Nulabilidad | Descripción |
 | :--- | :--- | :--- | :--- |
 | `id` | BIGINT UNSIGNED | NOT NULL | Clave primaria autoincremental. |
 | `cliente_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `clientes.id`. |
-| `cuota_id` | BIGINT UNSIGNED | NULL | Clave foránea -> `cuotas.id` (opcional si la visita cubre múltiples deudas). |
+| `cuota_id` | BIGINT UNSIGNED | NULL | Clave foránea -> `cuotas.id` (opcional si la visita cubre múltiples deudas o si el cliente está al día). |
 | `cobrador_id` | BIGINT UNSIGNED | NOT NULL | Clave foránea -> `users.id` (con rol cobrador). |
-| `domicilio` | VARCHAR(255) | NOT NULL | Dirección física a visitar (copiada del cliente para congelar estado). |
+| `domicilio` | VARCHAR(255) | NOT NULL | Domicilio visitado (snapshot histórico congelado al crear la visita, protege de cambios posteriores del cliente). |
 | `fecha_programada` | DATE | NOT NULL | Día planificado para la visita. |
 | `fecha_realizada` | TIMESTAMP | NULL | Momento exacto en que se concretó la visita física. |
 | `estado` | VARCHAR(50) | NOT NULL | Estado de la hoja de ruta (`pendiente`, `realizada`, `cancelada`). |
-| `resultado` | VARCHAR(50) | NULL | Clasificación del resultado de la visita (ver sección de Decisiones). |
-| `monto_cobrado` | DECIMAL(15,2) | NOT NULL | Monto cobrado en efectivo por el cobrador en el lugar (si corresponde). |
+| `resultado` | VARCHAR(50) | NULL | Clasificación del resultado de la visita (`cobrado`, `cobrado_parcialmente`, `no_estaba`, `no_se_pudo_contactar`, `reprogramar`, `se_nego_a_pagar`, `domicilio_incorrecto`). |
+| `monto_cobrado` | DECIMAL(15,2) | NOT NULL | Monto cobrado en efectivo por el cobrador en el lugar (por defecto `0.00`). |
 | `observaciones` | TEXT | NULL | Comentarios o notas de campo de la visita. |
 | `created_at` | TIMESTAMP | NULL | Fecha de creación. |
 | `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
 
 ### `plantillas_mensajes`
-Plantillas parametrizadas para comunicaciones rápidas.
+Mensajes rápidos para contacto.
 
 | Campo | Tipo | Nulabilidad | Descripción |
 | :--- | :--- | :--- | :--- |
 | `id` | BIGINT UNSIGNED | NOT NULL | Clave primaria autoincremental. |
 | `titulo` | VARCHAR(100) | NOT NULL | Identificador interno (ej: "Aviso Vence Hoy"). |
 | `categoria` | VARCHAR(50) | NOT NULL | Categoría del mensaje (`proximo_vencimiento`, `vence_hoy`, `cuota_vencida`, `link_pago`, `promesa_pago`, `seguimiento_promesa`, `cobrador`, `sin_respuesta`). |
-| `cuerpo` | TEXT | NOT NULL | Texto de la plantilla que incluye etiquetas dinámicas (ej: `{nombre}`, `{importe}`, `{fecha}`, `{numero_cuota}`, `{link_pago}`). |
+| `cuerpo` | TEXT | NOT NULL | Texto parametrizado con etiquetas dinámicas (ej: `{nombre}`, `{importe}`, `{numero_cuota}`, `{link_pago}`). |
 | `activo` | BOOLEAN | NOT NULL | Permite inhabilitar plantillas en desuso (`true` o `false`). |
 | `created_at` | TIMESTAMP | NULL | Fecha de creación. |
 | `updated_at` | TIMESTAMP | NULL | Fecha de última modificación. |
 
 ---
 
-## 4. Relaciones (Diagrama Entidad-Relación)
+## 4. Diagrama Entidad-Relación (Mermaid)
 
-A continuación se muestra gráficamente cómo interactúan las entidades mediante un diagrama Mermaid estructurado:
+El siguiente diagrama detalla cómo interactúan las nuevas entidades y la reestructuración del modelo de datos:
 
 ```mermaid
 erDiagram
@@ -263,7 +278,21 @@ erDiagram
     OPERACIONES {
         bigint id PK
         bigint cliente_id FK
-        string numero_solicitud UK
+        string numero_solicitud UK "Crédito completo"
+    }
+    CUOTAS {
+        bigint id PK
+        bigint operacion_id FK
+        int numero_cuota
+        tinyint dia_cobro
+        decimal importe_original
+        decimal punitorios
+        decimal total_actualizado
+        decimal saldo_pendiente
+        string estado_financiero "pendiente, ausente_en_ultima_importacion..."
+        string estado_gestion "sin_contactar, promesa_pendiente, cobrado..."
+        string prioridad
+        string link_pago
     }
     PERIODOS_COBRANZA {
         bigint id PK
@@ -287,31 +316,23 @@ erDiagram
         int registros_errores
         string estado
     }
-    CUOTAS {
+    CUOTA_IMPORTACIONES {
         bigint id PK
-        bigint operacion_id FK
-        bigint periodo_cobranza_id FK
-        int numero_cuota
-        tinyint dia_cobro
-        decimal importe_original
-        decimal punitorios
-        decimal total_actualizado
-        string estado
-        string prioridad
-        string link_pago
+        bigint cuota_id FK
+        bigint importacion_id FK
+        decimal importe_original_observado
+        decimal punitorios_observados
+        decimal total_actualizado_observado
+        tinyint dia_cobro_observado
+        string estado_presencia "presente / ausente_en_importacion"
     }
     DETALLE_IMPORTACIONES {
         bigint id PK
         bigint importacion_id FK
-        bigint cuota_id FK
+        int numero_linea
         string accion
-        decimal importe_original_anterior
-        decimal importe_original_nuevo
-        decimal punitorios_anterior
-        decimal punitorios_nuevo
-        string estado_anterior
-        string estado_nuevo
         text detalles_error
+        text datos_crudos
     }
     GESTIONES {
         bigint id PK
@@ -332,7 +353,7 @@ erDiagram
         timestamp fecha_creacion
         date fecha_prometida
         decimal monto_prometido
-        string estado
+        string estado "pendiente, cumplida, incumplida..."
         timestamp fecha_resolucion
         text observaciones
     }
@@ -341,24 +362,25 @@ erDiagram
         bigint cuota_id FK
         bigint user_id FK
         timestamp fecha_pago
-        decimal importe_original
-        decimal punitorios_existentes
-        decimal total_actualizado
+        decimal importe_original_snapshot
+        decimal punitorios_snapshot
+        decimal total_actualizado_snapshot
         decimal monto_cobrado
         decimal punitorios_perdonados
+        boolean es_cancelatorio
         string medio_pago
         text observaciones
     }
     VISITAS_COBRADOR {
         bigint id PK
         bigint cliente_id FK
-        bigint cuota_id FK
+        bigint cuota_id FK "nullable"
         bigint cobrador_id FK
-        string domicilio
+        string domicilio "Snapshot histórico"
         date fecha_programada
         timestamp fecha_realizada
-        string estado
-        string resultado
+        string estado "pendiente, realizada, cancelada"
+        string resultado "cobrado, no_estaba..."
         decimal monto_cobrado
         text observaciones
     }
@@ -374,7 +396,7 @@ erDiagram
     USERS ||--o{ GESTIONES : "registra"
     USERS ||--o{ PROMESAS_PAGO : "valida"
     USERS ||--o{ PAGOS : "cobra"
-    USERS ||--o{ VISITAS_COBRADOR : "visita"
+    USERS ||--o{ VISITAS_COBRADOR : "asigna_cobrador"
 
     CLIENTES ||--o{ OPERACIONES : "posee"
     CLIENTES ||--o{ VISITAS_COBRADOR : "recibe"
@@ -382,14 +404,14 @@ erDiagram
     OPERACIONES ||--o{ CUOTAS : "contiene"
 
     PERIODOS_COBRANZA ||--o{ IMPORTACIONES : "organiza"
-    PERIODOS_COBRANZA ||--o{ CUOTAS : "asocia"
 
+    IMPORTACIONES ||--o{ CUOTA_IMPORTACIONES : "contiene"
     IMPORTACIONES ||--o{ DETALLE_IMPORTACIONES : "detalla"
 
-    CUOTAS ||--o{ DETALLE_IMPORTACIONES : "audita"
+    CUOTAS ||--o{ CUOTA_IMPORTACIONES : "aparece"
     CUOTAS ||--o{ GESTIONES : "recibe"
     CUOTAS ||--o{ PROMESAS_PAGO : "compromete"
-    CUOTAS ||--o{ PAGOS : "liquida"
+    CUOTAS ||--o{ PAGOS : "recibe_pago"
     CUOTAS ||--o{ VISITAS_COBRADOR : "monitorea"
 
     GESTIONES ||--o| PROMESAS_PAGO : "origina"
@@ -399,127 +421,225 @@ erDiagram
 
 ## 5. Índices Recomendados
 
-Para garantizar que el sistema mantenga un desempeño excelente bajo grandes volúmenes de carteras e interacciones, se sugieren los siguientes índices de base de datos:
+Para garantizar un excelente desempeño bajo grandes volúmenes de carteras, se sugieren los siguientes índices:
 
-1.  **`clientes (documento)`**: Índice regular para búsquedas inmediatas de clientes por DNI/CUIL.
-2.  **`clientes (codigo_cliente_oficial)`**: Índice regular/único para vinculación rápida desde planillas.
-3.  **`operaciones (numero_solicitud)`**: Índice único para evitar duplicar créditos oficiales.
-4.  **`cuotas (operacion_id, numero_cuota)`**: Índice único y compuesto. Evita la duplicidad lógica financiera de la cuota y agiliza las consultas vinculadas.
-5.  **`cuotas (estado)`**: Optimiza los filtros de tableros diarios y agendas de cobranzas.
-6.  **`cuotas (prioridad)`**: Acelera la ordenación del dashboard de prioridades críticas y altas.
-7.  **`periodos_cobranza (anio, mes)`**: Índice único. Garantiza que solo exista un periodo activo por mes calendario.
-8.  **`gestiones (cuota_id, fecha_hora)`**: Optimiza la renderización de la línea de tiempo (historial) de cada ficha de cliente.
-9.  **`promesas_pago (fecha_prometida, estado)`**: Crítico para la sección "Promesas para Hoy" del dashboard diario de gestión.
-10. **`visitas_cobrador (cobrador_id, fecha_programada, estado)`**: Diseñado para armar las hojas de ruta diarias eficientes de cada cobrador de manera instantánea.
+1.  **`clientes (documento)`**: Búsquedas inmediatas de clientes por DNI/CUIL.
+2.  **`clientes (codigo_cliente_oficial)`**: Vinculación rápida desde planillas de carteras.
+3.  **`operaciones (numero_solicitud)`**: Índice único para evitar duplicados del crédito completo.
+4.  **`cuotas (operacion_id, numero_cuota)`**: Compuesto y ÚNICO. Bloquea duplicidades lógicas de cuota de forma estricta.
+5.  **`cuotas (estado_financiero)`** y **`cuotas (estado_gestion)`**: Acelera los filtros en tableros y agendas.
+6.  **`cuotas (prioridad)`**: Ordenación del dashboard según la prioridad calculada o guardada.
+7.  **`periodos_cobranza (anio, mes)`**: Único, impide duplicación de períodos mensuales.
+8.  **`cuota_importaciones (cuota_id, importacion_id)`**: Compuesto y ÚNICO. Evita múltiples registros de aparición de una cuota en la misma importación.
+9.  **`gestiones (cuota_id, fecha_hora)`**: Para renderizar la línea de tiempo histórica del cliente rápidamente.
+10. **`promesas_pago (fecha_prometida, estado)`**: Crítico para buscar las promesas diarias pendientes.
+11. **`visitas_cobrador (cobrador_id, fecha_programada, estado)`**: Creación de hojas de ruta de cobradores.
 
 ---
 
-## 6. Restricciones Únicas
+## 6. Restricciones Únicas de Base de Datos
 
-Para asegurar la coherencia relacional se implementarán las siguientes restricciones a nivel base de datos:
-
-*   **`users.email`**: Unicidad de correos para evitar colisiones de cuentas de usuario.
-*   **`operaciones.numero_solicitud`**: Unicidad para impedir que un mismo crédito de la financiera se registre como dos operaciones distintas de la aplicación.
-*   **`cuotas` (Compuesta: `operacion_id`, `numero_cuota`)**: La clave lógica oficial de una cuota de la financiera es: **"Número de Solicitud + Número de Cuota"**. Dado que la operación ya es única por `numero_solicitud`, un índice único sobre `(operacion_id, numero_cuota)` bloquea cualquier posibilidad de duplicar una cuota durante cargas fallidas o concurrentes.
-*   **`periodos_cobranza` (Compuesta: `anio`, `mes`)**: Evita la coexistencia de múltiples periodos para una misma fecha mensual.
+*   **`users.email`**: Único.
+*   **`operaciones.numero_solicitud`**: Único a nivel global de la base de datos.
+*   **`cuotas` (Compuesta: `operacion_id`, `numero_cuota`)**: Única. Garantiza que solo exista una Cuota N para la Operación X.
+*   **`cuota_importaciones` (Compuesta: `cuota_id`, `importacion_id`)**: Única. Impide duplicados de presencia de cuota en el mismo archivo procesado.
+*   **`periodos_cobranza` (Compuesta: `anio`, `mes`)**: Único. Evita la coexistencia de múltiples periodos de cobranza activos duplicados para un mismo mes del calendario.
 
 ---
 
 ## 7. Reglas de Integridad Referencial
 
-*   **`ON DELETE RESTRICT` (Por defecto para relaciones estructurales críticas)**:
+*   **`ON DELETE RESTRICT`**:
     *   No se puede eliminar un `cliente` si tiene `operaciones` vigentes.
     *   No se puede eliminar una `operacion` si tiene `cuotas` asociadas.
-    *   No se puede borrar un `periodo_cobranza` si ya posee `cuotas` cargadas para ese ciclo.
-    *   No se puede eliminar un `usuario` si tiene registros asociados en `gestiones`, `promesas_pago`, `pagos` o `visitas_cobrador`. Esto preserva la trazabilidad de auditoría de las acciones realizadas por cada empleado.
-*   **`ON DELETE CASCADE` (Solo para agregados lógicos dependientes)**:
-    *   `detalle_importaciones` se eliminará en cascada únicamente si la cabecera `importaciones` es eliminada de manera intencionada por depuración.
+    *   No se puede borrar un `periodo_cobranza` si ya posee `importaciones` cargadas.
+    *   No se puede eliminar un `usuario` si tiene registros asociados en `gestiones`, `promesas_pago`, `pagos` o `visitas_cobrador` para preservar la auditoría y trazabilidad del trabajo del empleado.
+*   **`ON DELETE CASCADE`**:
+    *   `cuota_importaciones` y `detalle_importaciones` se eliminarán en cascada únicamente si la cabecera `importaciones` es eliminada de manera intencionada por depuración técnica de carteras.
 *   **`Soft Deletes` (Bajas lógicas)**:
-    *   **No** se utilizará Soft Deletes para entidades contables y financieras críticas (`cuotas`, `pagos`, `operaciones`, `clientes`), ya que un registro ausente en la planilla oficial debe cambiar de **estado** lógicamente (ej: `'pago_realizado_oficial'`), pero **nunca ser ocultado físicamente** mediante soft deletes, lo que falsearía la historia de auditoría de las gestiones.
-    *   Podría aplicarse Soft Deletes opcionalmente en **`plantillas_mensajes`** para permitir a los usuarios "eliminar" plantillas sin romper la interfaz, pero preservándolas en la base de datos de manera oculta.
+    *   **No** se utilizará Soft Deletes para entidades contables y financieras críticas (`cuotas`, `pagos`, `operaciones`, `clientes`), ya que un registro ausente en la planilla oficial debe cambiar de **estado financiero** lógicamente (ej: `'ausente_en_importacion'`), pero **nunca ser ocultado físicamente** mediante soft deletes, lo que falsearía la historia de auditoría de las gestiones.
 
 ---
 
 ## 8. Estrategia de Sincronización (Importaciones Posteriores)
 
-La sincronización mensual o periódica de carteras es la funcionalidad más delicada del sistema. El proceso se detalla a continuación paso a paso para evitar duplicados y conservar intacta la gestión:
+La sincronización mensual o periódica de carteras es el proceso principal del sistema. Funciona bajo las siguientes premisas:
 
 1.  **Lectura del Archivo (PhpSpreadsheet)**:
-    Se lee el CSV o XLSX provisto. Por cada fila, se extraen los campos oficiales clave: `numero_solicitud`, `numero_cuota`, `nombre`, `apellido`, `dni`/`documento`, `dia_cobro`, `importe_original` y `punitorios`.
+    Se procesa el archivo provisto. Por cada fila, se extraen los campos oficiales: `numero_solicitud`, `numero_cuota`, `nombre`, `apellido`, `dni`/`documento`, `dia_cobro`, `importe_original` y `punitorios`.
 2.  **Identificación y Matching del Cliente**:
-    *   Se verifica si ya existe el cliente buscando por `documento` (DNI/CUIL). Si coincide, se reutiliza.
-    *   Si no se posee documento único en la planilla, se busca por `codigo_cliente_oficial` o por coincidencia exacta de `nombre` + `apellido`.
-    *   Si no existe, se inserta el nuevo registro en la tabla `clientes`.
-3.  **Identificación y Matching de la Operación**:
-    *   Se busca en `operaciones` por `numero_solicitud`.
-    *   Si no existe, se crea vinculada al `cliente_id` detectado en el paso anterior.
+    *   Se busca en `clientes` con prioridad:
+        1. Código único oficial de cliente (`codigo_cliente_oficial`), si se provee.
+        2. Número de documento (`documento`), si existe y es confiable.
+        3. En caso de no existir o no ser confiables, el sistema registra una coincidencia potencial por `nombre + apellido` como última opción interna, pero **no asume unicidad artificial rígida** para evitar riesgos de homonimia. Si no se puede identificar unívocamente, se crea un nuevo cliente.
+3.  **Identificación y Matching de la Operación (Crédito Completo)**:
+    *   Se busca en `operaciones` por `numero_solicitud` (ej. "2455").
+    *   Si no existe, se crea vinculada al cliente identificado en el paso anterior.
 4.  **Procesamiento de la Cuota**:
-    *   Se busca en `cuotas` la combinación `(operacion_id, numero_cuota)` para el periodo de cobranza actual (`periodo_cobranza_id`).
-    *   **Caso A (Registro Nuevo)**: Si no se encuentra, se crea la cuota con estado inicial `'proximo_vencimiento'` o `'vencida'` (dependiendo del calendario y la fecha). Se registra la acción `'creado'` en `detalle_importaciones`.
-    *   **Caso B (Registro Existente)**: Si ya existe en la base de datos, el sistema **solo actualiza los datos oficiales financieros**:
+    *   Se busca en `cuotas` utilizando la combinación `(operacion_id, numero_cuota)`.
+    *   **Caso A (Cuota Nueva)**: Si no se encuentra, se crea la cuota con estado financiero inicial `'pendiente'`, estado de gestión `'sin_contactar'`, y `saldo_pendiente = importe_original + punitorios`.
+    *   **Caso B (Cuota Existente)**: Si ya existe en la base de datos, el sistema **solo actualiza los datos oficiales financieros**:
         *   Nuevos valores de `punitorios`.
         *   Nuevo valor de `total_actualizado` (`importe_original` + `punitorios`).
-        *   **Regla de Oro**: No se modifican los campos de gestión propia (`telefono`, `domicilio`, `estado` si tiene gestiones activas, `prioridad`, observaciones, etc.).
-        *   Se registra el cambio detallado de punitorios en `detalle_importaciones` con la acción `'actualizado_punitorios'`.
-5.  **Identificación de Registros Ausentes (Cobro Oficial)**:
-    *   Una vez leídas todas las filas del archivo de importación posterior, el sistema recopila los IDs de todas las cuotas del periodo actual que **estaban activas en la base de datos antes de importar**, pero que **no vinieron en el nuevo archivo**.
-    *   **Acción del Sistema**: Esto indica que el cliente saldó su deuda directamente en los canales oficiales de la financiera.
-    *   El sistema cambia automáticamente su estado a **`'pago_realizado_oficial'`**.
-    *   **Trazabilidad**: No se borra la cuota de la base de datos. Se conserva todo el historial de promesas, gestiones e intentos de contacto asociados a dicha cuota. Se inserta un registro en `detalle_importaciones` con la acción `'marcado_pagado_oficial'`.
+        *   Se recalcula el `saldo_pendiente` si no tiene pagos registrados.
+        *   **Regla de Oro**: No se destruye ni sobrescribe información de gestión propia (`telefono`, `domicilio`, `estado_gestion`, `observaciones`, `gestiones`, `promesas`, `pagos`, `visitas_cobrador` o prioridad manual).
+5.  **Registro de Aparición**:
+    *   Por cada cuota procesada en la importación actual (sea nueva o preexistente), se inserta un registro en la tabla **`cuota_importaciones`** con `estado_presencia = 'presente'`, guardando los valores observados exactos de esa fecha. Esto construye el **Historial de Punitorios**.
+6.  **Identificación de Cuotas Ausentes ("Ausente" !== "Pagado")**:
+    *   Una vez leídas todas las filas del archivo de importación, el sistema busca las cuotas que estaban activas en la base de datos antes de importar, pero que **no se incluyeron en el nuevo archivo**.
+    *   **Acción del Sistema**:
+        *   No se asume de manera automática que el cliente pagó ni se registra un pago.
+        *   No se borra la cuota de la base de datos para preservar todo su historial.
+        *   Se cambia su `estado_financiero` a **`'ausente_en_ultima_importacion'`**.
+        *   Se inserta un registro de aparición en **`cuota_importaciones`** con `estado_presencia = 'ausente_en_importacion'`.
+        *   De esta manera, los gestores de la aplicación pueden ver visualmente la ausencia y confirmar de forma manual qué ocurrió antes de archivarla o registrar el pago correspondiente.
 
 ---
 
-## 9. Estrategia de Historial e Inmutabilidad Financiera
+## 9. Ejemplo Obligatorio de Sincronización y Evolución
 
-Para asegurar que la aplicación sirva como una herramienta de auditoría robusta, se implementan los siguientes principios de inmutabilidad:
+### Paso 1: Importación Inicial — 01/08
+Archivo importado:
+*   Solicitud 2455 — Cuota 5 (Importe: $100.000, Punitorios: $2.000)
+*   Solicitud 3000 — Cuota 2 (Importe: $80.000, Punitorios: $1.000)
+*   Solicitud 4100 — Cuota 8 (Importe: $150.000, Punitorios: $3.000)
 
-1.  **Doble Entrada Contable en Pagos**:
-    En la tabla `pagos`, los campos `importe_original`, `punitorios_existentes` y `total_actualizado` actúan como un **snapshot congelado** del estado financiero de la cuota al momento exacto de recibir el dinero. Incluso si posteriores importaciones o reajustes ocurren, el registro de pago mantiene fijos los valores históricos de deuda.
-2.  **Monto Cobrado vs. Total Actualizado**:
-    Se independiza totalmente el cobro real de la deuda teórica. Si el `monto_cobrado` es menor al `total_actualizado`, se calcula y congela de manera explícita en `punitorios_perdonados` la condonación realizada, permitiendo generar métricas de eficiencia y pérdidas por perdón de intereses a fin de mes.
-3.  **Historial Completo de Promesas**:
-    No se sobreescribe el estado de la promesa anterior si esta se incumple. En lugar de eso, la promesa vieja cambia a estado `'incumplida'` y se crea un registro de promesa **completamente nuevo** para la fecha subsiguiente, manteniendo el historial completo de la conducta del cliente.
-4.  **Bitácora de Auditoría de Importaciones (`detalle_importaciones`)**:
-    Garantiza que, ante reclamos o dudas de deudores, se pueda reconstruir exactamente el día y la hora en que el sistema de la financiera modificó o eliminó una cuota de la cartera pendiente oficial.
+**Resultado en la Base de Datos:**
+*   Se crean las operaciones `2455`, `3000` y `4100` en la tabla `operaciones` (si no existían).
+*   Se crean 3 cuotas en `cuotas`:
+    *   Cuota `2455/5` con `importe_original = 100000.00`, `punitorios = 2000.00`, `total_actualizado = 102000.00`, `estado_financiero = 'pendiente'`.
+    *   Cuota `3000/2` con `importe_original = 80000.00`, `punitorios = 1000.00`, `total_actualizado = 81000.00`, `estado_financiero = 'pendiente'`.
+    *   Cuota `4100/8` con `importe_original = 150000.00`, `punitorios = 3000.00`, `total_actualizado = 153000.00`, `estado_financiero = 'pendiente'`.
+*   Se crean 3 registros de presencia en `cuota_importaciones` asociados a esta importación inicial con los respectivos valores oficiales iniciales.
+
+### Paso 2: Segunda Importación — 10/08
+Archivo importado (la Solicitud 2455 — Cuota 5 ya no aparece):
+*   Solicitud 3000 — Cuota 2 (Importe: $80.000, Punitorios: $2.500)  *(Punitorios aumentaron)*
+*   Solicitud 4100 — Cuota 8 (Importe: $150.000, Punitorios: $4.500)  *(Punitorios aumentaron)*
+
+**Resultado en la Base de Datos:**
+*   Las cuotas `3000/2` y `4100/8` se actualizan en `cuotas` con sus nuevos punitorios ($2.500 y $4.500).
+*   Se insertan nuevos registros en `cuota_importaciones` reflejando su presencia en esta segunda importación con los nuevos punitorios actualizados.
+*   La cuota **`2455/5` no se elimina, no se duplica ni se registra un pago automático**.
+*   El `estado_financiero` de la cuota `2455/5` cambia a **`'ausente_en_ultima_importacion'`**.
+*   Se inserta un registro en `cuota_importaciones` para la cuota `2455/5` con `estado_presencia = 'ausente_en_importacion'`. Su historial completo de gestiones, llamadas, promesas y visitas permanece intacto en el sistema.
+
+### Paso 3: Tercera Importación — 20/08 (Reaparición de la Cuota)
+Archivo importado (la Solicitud 2455 — Cuota 5 vuelve a aparecer con punitorios más altos):
+*   Solicitud 2455 — Cuota 5 (Importe: $100.000, Punitorios: $5.000)
+*   Solicitud 3000 — Cuota 2 (Importe: $80.000, Punitorios: $3.500)
+*   Solicitud 4100 — Cuota 8 (Importe: $150.000, Punitorios: $6.000)
+
+**Resultado en la Base de Datos:**
+*   El sistema reconoce que `2455` + cuota `5` ya existe en la base de datos. **No crea una nueva cuota ni una nueva operación**.
+*   Actualiza los punitorios de la cuota preexistente `2455/5` a $5.000 y cambia su `estado_financiero` de vuelta a `'pendiente'`.
+*   Registra una nueva aparición en `cuota_importaciones` para esta importación del 20/08, reflejando el nuevo valor oficial observado de punitorios ($5.000).
+
+### Paso 4: Avance Normal del Crédito
+Supongamos que el deudor cancela la cuota 5 y avanza normalmente con el crédito de la operación.
+En la cartera del mes siguiente, el archivo oficial contiene:
+*   Solicitud 2455 — Cuota 6 (Importe: $100.000, Punitorios: $0)
+
+**Resultado en la Base de Datos:**
+*   El sistema identifica que la operación `2455` ya existe. **No se crea una nueva operación 2455**.
+*   Se crea la cuota número `6` vinculada a la operación `2455` preexistente.
+*   La operación `2455` ahora contiene en su historial tanto la cuota `5` como la cuota `6` con su respectivo historial independiente.
 
 ---
 
-## 10. Decisiones Técnicas y de Negocio
+## 10. Gestión Contable de Pagos
 
-A continuación se fundamentan las decisiones clave de diseño aplicadas a este modelo:
+El sistema independiza el monto teórico adeudado del cobro real recibido y permite registrar tres flujos principales con precisión:
 
-### 10.1 Gestión de Enums vs. Tablas Configurables para Tipos y Resultados
-*   **Decisión**: Utilizar clases de soporte PHP (`App\Enums\*` o constantes en los modelos) en lugar de crear tablas físicas de configuración de tipos de gestión y resultados.
-*   **Justificación**: Las interacciones de cobranza (WhatsApp, Llamada, Visita) y sus resultados (No atendió, Prometió pagar, Pagó) son reglas estables del negocio que difícilmente cambian de forma dinámica sin que requieran también cambios en el código de la aplicación. Mantenerlos en PHP mejora la velocidad de ejecución (evita múltiples JOINs en consultas de listado), facilita las traducciones y reduce la complejidad de mantenimiento de la base de datos.
+### 10.1 Pago Completo sin Condonación (Con Punitorios)
+*   **Ejemplo:**
+    *   Importe original de cuota: $100.000
+    *   Punitorios oficiales: $2.000
+    *   Total actualizado oficial: $102.000
+    *   Monto cobrado: $102.000
+    *   Punitorios perdonados: $0
+*   **Comportamiento:** Se registra el pago en `pagos` por $102.000. El `saldo_pendiente` de la cuota cambia a $0 y el `estado_gestion` pasa a `'cobrado'`. El `estado_financiero` se actualiza a `'pago_realizado_oficial'` (o `'pago_realizado_app'`).
 
-### 10.2 Modelado de Visitas de Cobrador (Relación Nullable con Cuota)
-*   **Decisión**: La relación de `visitas_cobrador` con `cuotas` es **nullable**, pero es obligatoria con `clientes`.
-*   **Justificación**: Una visita domiciliaria puede existir de forma preventiva (ej. el cliente solicitó voluntariamente que pasen a cobrarle su cuota regular) o punitiva (ej. mora grave). Asimismo, un cobrador a domicilio puede dirigirse al hogar de un cliente para negociar y gestionar **múltiples cuotas atrasadas** simultáneamente. Al permitir que `cuota_id` sea nulo, la visita se vincula al `cliente_id` de manera global, otorgando total flexibilidad logística sin forzar la creación de una visita por cada cuota individual.
+### 10.2 Pago Completo con Punitorios Perdonados (Condonación de Intereses)
+*   **Ejemplo:**
+    *   Importe original de cuota: $100.000
+    *   Punitorios oficiales: $2.000
+    *   Total actualizado oficial: $102.000
+    *   Monto cobrado: $100.000
+    *   Punitorios perdonados: $2.000
+*   **Comportamiento:** El usuario registra el ingreso de $100.000 e indica de manera explícita que se perdonaron los $2.000 de punitorios. El `saldo_pendiente` de la cuota cambia a $0, el `estado_gestion` pasa a `'cobrado'`, y los intereses condonados quedan archivados de manera exacta en `pagos.punitorios_perdonados` para reportes.
 
-### 10.3 Estados Soportados de una Cuota
-Para coordinar el ciclo de vida sin depender de una única columna restrictiva, se define el siguiente listado de estados controlados en `cuotas.estado`:
-*   `'proximo_vencimiento'`: Cuota que vence en los próximos días del ciclo mensual.
-*   `'vence_hoy'`: Vence en la fecha actual.
-*   `'vencida'`: Mora corriente sin contacto exitoso.
-*   `'promesa_pago'`: Cliente contactado con una promesa activa vigente.
-*   `'promesa_incumplida'`: Fecha prometida de pago superada sin registro de ingreso. eleva la prioridad inmediatamente.
-*   `'sin_respuesta'`: Superado el umbral configurable de gestiones fallidas continuas. Sugiere derivación a cobrador domiciliario.
-*   `'pago_realizado_app'`: Pago registrado manualmente por el gestor de la aplicación.
-*   `'pago_realizado_oficial'`: Resuelto y liquidado en el sistema oficial de la financiera (desapareció de la cartera en la sincronización).
-*   `'gestion_domiciliaria_pendiente'`: Derivado y asignado formalmente a un cobrador a domicilio.
-*   `'visita_realizada'`: Visita domiciliaria ejecutada con novedades registradas.
-*   `'no_localizada'`: Se visitó el domicilio pero se constató que no reside allí o es incorrecto.
-*   `'cancelada'`: Cuota anulada o refinanciada oficialmente.
+### 10.3 Pagos Parciales (Entregas a Cuenta)
+*   **Ejemplo:**
+    *   Importe original de cuota: $100.000
+    *   Punitorios oficiales: $2.000
+    *   Deuda total: $102.000
+    *   Monto cobrado (entrega a cuenta): $50.000
+*   **Comportamiento:**
+    *   Se registra el pago parcial de $50.000 en la tabla `pagos` con `es_cancelatorio = false` y `punitorios_perdonados = 0.00`.
+    *   **Regla Contable:** **No** se asume que los $52.000 restantes son "punitorios perdonados".
+    *   El `saldo_pendiente` de la cuota se reduce a $52.000 (`$102.000 - $50.000`).
+    *   El `estado_gestion` cambia a `'seguimiento'` o se mantiene en gestión de saldo pendiente.
+    *   Los punitorios perdonados solo se calcularán y registrarán si en el pago final (cancelatorio) se decide perdonar el saldo restante de intereses.
 
 ---
 
-## 11. Decisiones Técnicas que Requieren Revisión (REQUIRES REVIEW)
+## 11. Datos Oficiales vs. Datos Internos de Gestión
 
-Las siguientes propuestas de diseño tocan directamente políticas comerciales de la financiera y el flujo operativo de los empleados. Se marcan como **requiere revisión** y deben confirmarse antes de su futura implementación física:
+Para asegurar la inmutabilidad y la seguridad operativa de la herramienta, se establece una división estricta de responsabilidades sobre los campos del sistema:
 
-1.  **`REQUIRES REVIEW` — Políticas de Condonación en Pagos**:
-    ¿Cualquier gestor o cobrador tiene la atribución legal para perdonar el 100% de los punitorios? El modelo propuesto calcula de forma automática `punitorios_perdonados = total_actualizado - monto_cobrado`. ¿Debería agregarse un campo de "Límite Máximo de Condonación Autorizado" por rol de usuario para evitar condonaciones excesivas no autorizadas?
-2.  **`REQUIRES REVIEW` — Algoritmo Automático de Priorización**:
-    Se ha incluido el campo `prioridad` en la tabla `cuotas` (`critica`, `alta`, `media`, `baja`). ¿La prioridad debe calcularse y actualizarse de manera dinámica mediante un comando programado nocturno (ej: según días de mora e intentos de llamada fallidos) o debe ser un campo estático que el gestor pueda alterar de manera subjetiva según su criterio de campo?
-3.  **`REQUIRES REVIEW` — Mapeo de Clientes Duplicados sin Documento Único**:
-    En caso de que la planilla oficial de la financiera no contenga un campo de identificación inequívoca como DNI/CUIL, se propone realizar el matching por la combinación de `nombre` + `apellido`. Esto introduce riesgos de homonimia (dos clientes distintos con idéntico nombre). ¿Existe la posibilidad de exigir que la planilla exportada del sistema oficial incluya obligatoriamente un DNI o código único de cliente oficial?
+### Datos Oficiales (De Solo Lectura por el Importador)
+Estos campos provienen directamente del sistema oficial de la financiera. **El importador puede crearlos y actualizarlos**, pero ningún usuario puede modificarlos manualmente de manera directa en la aplicación para evitar discrepancias financieras:
+*   `operaciones.numero_solicitud`
+*   `cuotas.numero_cuota`
+*   `cuotas.importe_original`
+*   `cuotas.punitorios`
+*   `cuotas.total_actualizado`
+*   `cuotas.dia_cobro`
+*   `cuota_importaciones.*` (Valores observados oficiales)
+
+### Datos Internos y de Gestión (De Escritura Exclusiva de la Aplicación)
+Estos campos pertenecen al valor agregado por el equipo de cobranzas y la lógica de negocio diaria. **El importador de carteras nunca los destruirá, vaciará ni sobrescribirá** durante sincronizaciones posteriores:
+*   `clientes.telefono` (Permite corregir o agregar números válidos detectados).
+*   `clientes.domicilio` (Permite actualizar la dirección de gestión del deudor).
+*   `clientes.email`
+*   `cuotas.saldo_pendiente` (Calculado y modificado por el registro de pagos parciales en la app).
+*   `cuotas.estado_gestion` (Controlado por las interacciones y acciones del gestor).
+*   `cuotas.prioridad` (Calculado dinámicamente o ajustado manualmente por el equipo).
+*   `cuotas.link_pago`
+*   `gestiones.*` (Historial de contactos intocable).
+*   `promesas_pago.*` (Historial de compromisos de pago intocable).
+*   `pagos.*` (Historial de ingresos de caja intocable).
+*   `visitas_cobrador.*` (Planificación y campo congelado de visitas intocable).
+
+---
+
+## 12. Decisiones Técnicas y de Negocio
+
+A continuación se fundamentan las decisiones operativas tomadas para este diseño:
+
+### 12.1 Separación Estricta de Estados en la Cuota
+*   **Decisión:** Eliminar `cuotas.estado` y reemplazarlo por dos columnas diferenciadas: `estado_financiero` y `estado_gestion`.
+*   **Justificación:** Un deudor puede tener una promesa de pago vigente (estado de gestión interna) mientras que oficialmente su cuota sigue estando `'pendiente'` (estado financiero oficial). Al separarlos, evitamos colisiones y permitimos que un archivo de importación posterior actualice los aspectos oficiales sin alterar la fase de negociación interna del gestor.
+
+### 12.2 Coexistencia de `cuota_importaciones` y `detalle_importaciones`
+*   **Decisión:** Mantener ambas tablas con propósitos claramente diferenciados.
+*   **Justificación:**
+    *   **`cuota_importaciones`**: Es una entidad transaccional de negocio que registra los datos financieros de presencia oficiales observados. Sirve para construir el gráfico de la evolución histórica de punitorios y verificar la asistencia de una cuota en la cartera de un día específico.
+    *   **`detalle_importaciones`**: Es un log técnico de ejecución del importador. Guarda los errores de validación, fallos de lectura, líneas con formatos inválidos y bitácora de auditoría detallada que no tiene valor relacional directo para la gestión cotidiana pero sí para el soporte técnico.
+
+### 12.3 Prioridad de Cuota: Almacenada con Recálculo Semidinámico
+*   **Decisión:** El campo `cuotas.prioridad` se almacena físicamente en la tabla de base de datos para facilitar búsquedas y ordenamientos rápidos en listados masivos de clientes, pero se recalcula de forma semidinámica a través de eventos de la aplicación (ej: al registrar una promesa incumplida, al pasar un cliente a estado `'sin_respuesta'`, o mediante un comando programado nocturno que evalúe los días de mora).
+
+---
+
+## 13. Decisiones Pendientes de Confirmación (REQUIRES REVIEW)
+
+Las siguientes propuestas de diseño tocan políticas comerciales y operativas y deben ser confirmadas por el usuario antes de comenzar con la etapa física de migraciones:
+
+1.  **`REQUIRES REVIEW` — Límites de Condonación para Perfiles de Cobradores**:
+    ¿Cualquier gestor o cobrador de calle tiene la atribución operativa para perdonar punitorios de manera ilimitada en el sistema, o deberíamos diseñar un campo de "Límite de Condonación Autorizado" según el rol (`gestor`, `cobrador`) en la tabla `users`?
+2.  **`REQUIRES REVIEW` — Domicilio del Cliente vs. Domicilio de Visita**:
+    Se ha definido que la tabla `visitas_cobrador` guarda una copia en texto plano del `domicilio` al momento de programar la visita. Esto congela la historia ("se lo visitó en esa dirección"). ¿Es suficiente con esta inmutabilidad, o se preve la necesidad de manejar múltiples domicilios activos simultáneos por cliente?
+3.  **`REQUIRES REVIEW` — Validación de Carteras sin Documento Único**:
+    En caso de que las planillas de la financiera no cuenten de manera obligatoria con DNI/CUIL, se propone que el sistema de matching recurra a `nombre + apellido` como último recurso de vinculación. ¿Existe la posibilidad de que la empresa garantice un campo único por cliente (código de cliente o documento) para eliminar los fallos por nombres homónimos?
