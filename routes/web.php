@@ -13,3 +13,7 @@ Route::get('/dashboard', function () {
 Route::get('/importar', function () {
     return view('importar');
 })->name('importar');
+
+Route::get('/ficha-gestion/{cuotaId}', function ($cuotaId) {
+    return view('ficha', ['cuotaId' => $cuotaId]);
+})->name('ficha-gestion');

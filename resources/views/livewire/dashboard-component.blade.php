@@ -272,6 +272,11 @@
                                     <!-- Actions -->
                                     <td class="p-4 text-center">
                                         <div class="flex flex-wrap justify-center gap-1.5">
+                                            <!-- Ver Ficha / Gestionar -->
+                                            <a href="/ficha-gestion/{{ $cuota->id }}" title="Ver Ficha" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded shadow transition">
+                                                🔍 Gestionar
+                                            </a>
+
                                             <!-- WhatsApp -->
                                             @if($cuota->operacion->cliente->telefono)
                                                 <a href="https://wa.me/{{ preg_replace('/[^0-9]/', '', $cuota->operacion->cliente->telefono) }}" target="_blank" title="Enviar WhatsApp" class="px-2 py-1 bg-green-500 hover:bg-green-600 text-white text-xs font-semibold rounded shadow transition">
