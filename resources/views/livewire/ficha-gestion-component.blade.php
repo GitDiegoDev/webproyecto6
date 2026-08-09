@@ -510,31 +510,73 @@
                     ✉️ Plantillas de Mensajes de Cobranza
                 </h3>
 
-                <div>
-                    <label class="block text-xs font-semibold text-gray-400 mb-1">Seleccionar Plantilla Activa</label>
-                    <select wire:model.live="selectedPlantillaId" class="w-full text-xs p-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                        <option value="">Seleccione una plantilla...</option>
-                        @foreach($this->plantillas as $plantilla)
-                            <option value="{{ $plantilla->id }}">{{ $plantilla->titulo }} ({{ $plantilla->categoria }})</option>
-                        @endforeach
-                    </select>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-[10px] font-semibold text-gray-400 mb-1 uppercase">Filtrar Categoría</label>
+                        <select wire:model.live="selectedCategoria" class="w-full text-xs p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                            <option value="">Todas</option>
+                            <option value="proximo_vencimiento">Próximo vencimiento</option>
+                            <option value="vence_hoy">Vence hoy</option>
+                            <option value="cuota_vencida">Cuota vencida</option>
+                            <option value="link_pago">Link de pago</option>
+                            <option value="promesa_pago">Promesa de pago</option>
+                            <option value="seguimiento_promesa">Seguimiento promesa</option>
+                            <option value="cobrador">Cobrador</option>
+                            <option value="sin_respuesta">Sin respuesta</option>
+                            <option value="pago_pendiente">Pago pendiente</option>
+                            <option value="pago_parcial">Pago parcial</option>
+                            <option value="recordatorio_pago">Recordatorio pago</option>
+                            <option value="seguimiento_general">Seguimiento general</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] font-semibold text-gray-400 mb-1 uppercase">Seleccionar Plantilla</label>
+                        <select wire:model.live="selectedPlantillaId" class="w-full text-xs p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                            <option value="">Seleccione una...</option>
+                            @foreach($this->plantillas as $plantilla)
+                                <option value="{{ $plantilla->id }}">{{ $plantilla->titulo }}</option>
+                            @endforeach
+                        </select>
+                    </div>
                 </div>
+
+                @if(!empty($warnings))
+                    <div class="space-y-1">
+                        @foreach($warnings as $warn)
+                            <div class="bg-amber-50 dark:bg-amber-950/20 border-l-2 border-amber-500 p-2 text-[10px] text-amber-800 dark:text-amber-400 font-medium">
+                                ⚠️ {{ $warn }}
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
 
                 @if($previewMensaje)
                     <div class="space-y-3">
-                        <span class="block text-xs font-semibold text-gray-400">Mensaje con Variables Dinámicas</span>
-                        <div class="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg border border-gray-100 dark:border-gray-600 text-xs text-gray-800 dark:text-gray-300 break-words whitespace-pre-line font-medium leading-relaxed">
-                            {{ $previewMensaje }}
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-400 mb-1">✍️ Personalizar Mensaje (Modificación manual)</label>
+                            <textarea wire:model.live="previewMensaje" rows="6" class="w-full text-xs p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-medium focus:border-indigo-500 focus:ring-indigo-500 leading-relaxed"></textarea>
                         </div>
                         <div class="grid grid-cols-2 gap-2">
-                            <button onclick="navigator.clipboard.writeText($wire.previewMensaje); alert('¡Mensaje copiado al portapapeles!')" class="inline-flex justify-center items-center gap-1.5 px-2.5 py-2 text-xs font-bold text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition">
+                            <button onclick="navigator.clipboard.writeText($wire.previewMensaje); alert('¡Mensaje copiado al portapapeles!')" class="inline-flex justify-center items-center gap-1.5 px-2.5 py-2 text-xs font-bold text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition shadow-sm">
                                 📋 Copiar Mensaje
                             </button>
                             @if($this->cuota->operacion->cliente->telefono)
                                 <a href="{{ $this->whatsappUrl }}" target="_blank" class="inline-flex justify-center items-center gap-1.5 px-2.5 py-2 text-xs font-bold text-white bg-green-500 rounded-lg hover:bg-green-600 transition shadow">
                                     💬 Abrir WhatsApp
                                 </a>
+                            @else
+                                <span class="inline-flex justify-center items-center p-2 text-[10px] font-semibold text-red-800 bg-red-50 border border-red-200 rounded-lg text-center">
+                                    ❌ Sin teléfono válido
+                                </span>
                             @endif
+                        </div>
+
+                        <!-- Registrar gestión rápida de mensaje -->
+                        <div class="border-t pt-2">
+                            <button wire:click="openGestionModal" class="w-full text-xs font-bold text-indigo-600 hover:text-indigo-800 text-center">
+                                📝 Registrar gestión para este contacto
+                            </button>
                         </div>
                     </div>
                 @else

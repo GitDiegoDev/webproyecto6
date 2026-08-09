@@ -9,6 +9,7 @@ use App\Models\VisitaCobrador;
 use App\Models\Gestion;
 use App\Models\Pago;
 use App\Models\User;
+use App\Models\PlantillaMensaje;
 use App\Services\AgendaCobranzaService;
 use App\Services\CuotaStatusService;
 use App\Services\CuotaPriorityService;
@@ -16,6 +17,7 @@ use App\Services\GestionService;
 use App\Services\PromesaPagoService;
 use App\Services\VisitaCobradorService;
 use App\Services\PagoService;
+use App\Services\MessageTemplateService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
 
@@ -64,6 +66,15 @@ class AgendaCobranzaComponent extends Component
     public $visita_monto_cobrado = 0.00;
     public $visita_observaciones = '';
     public $visita_fecha_realizada = '';
+
+    // Contact Modal State
+    public $showContactModal = false;
+    public $contactCuotaId = null;
+    public $contactSelectedCategoria = '';
+    public $contactSelectedPlantillaId = '';
+    public $contactPreviewMessage = '';
+    public $contactWarnings = [];
+    public $contactWhatsappUrl = '';
 
     public function mount()
     {
@@ -295,6 +306,127 @@ class AgendaCobranzaComponent extends Component
 
         $this->closeModal();
         session()->flash('success', 'Resultado de visita registrado correctamente.');
+    }
+
+    // CONTACT MODAL METHODS (Centro de Comunicación Agenda Integration)
+
+    public function openContactModal($cuotaId)
+    {
+        $this->contactCuotaId = $cuotaId;
+        $cuota = Cuota::findOrFail($cuotaId);
+
+        $service = app(MessageTemplateService::class);
+        $suggested = $service->suggestCategoryForCuota($cuota);
+        $this->contactSelectedCategoria = $suggested;
+
+        $template = PlantillaMensaje::where('activo', true)
+            ->where('categoria', $suggested)
+            ->first();
+
+        if ($template) {
+            $this->contactSelectedPlantillaId = $template->id;
+            $parsed = $service->parseTemplate($template->cuerpo, $cuota);
+            $this->contactPreviewMessage = $parsed['text'];
+            $this->contactWarnings = $parsed['warnings'];
+        } else {
+            $fallback = PlantillaMensaje::where('activo', true)->first();
+            if ($fallback) {
+                $this->contactSelectedPlantillaId = $fallback->id;
+                $this->contactSelectedCategoria = $fallback->categoria;
+                $parsed = $service->parseTemplate($fallback->cuerpo, $cuota);
+                $this->contactPreviewMessage = $parsed['text'];
+                $this->contactWarnings = $parsed['warnings'];
+            } else {
+                $this->contactSelectedPlantillaId = '';
+                $this->contactPreviewMessage = '';
+                $this->contactWarnings = [];
+            }
+        }
+
+        $this->updateContactWhatsappUrl();
+        $this->showContactModal = true;
+    }
+
+    public function updatedContactSelectedCategoria($value)
+    {
+        $this->contactSelectedPlantillaId = '';
+        $this->contactPreviewMessage = '';
+        $this->contactWarnings = [];
+        $this->contactWhatsappUrl = '';
+    }
+
+    public function updatedContactSelectedPlantillaId($value)
+    {
+        if (!$value) {
+            $this->contactPreviewMessage = '';
+            $this->contactWarnings = [];
+            $this->contactWhatsappUrl = '';
+            return;
+        }
+
+        $template = PlantillaMensaje::find($value);
+        if ($template && $this->contactCuotaId) {
+            $cuota = Cuota::find($this->contactCuotaId);
+            $service = app(MessageTemplateService::class);
+            $parsed = $service->parseTemplate($template->cuerpo, $cuota);
+            $this->contactPreviewMessage = $parsed['text'];
+            $this->contactWarnings = $parsed['warnings'];
+            $this->updateContactWhatsappUrl();
+        }
+    }
+
+    public function updatedContactPreviewMessage()
+    {
+        $this->updateContactWhatsappUrl();
+    }
+
+    public function updateContactWhatsappUrl()
+    {
+        if (!$this->contactCuotaId) {
+            $this->contactWhatsappUrl = '';
+            return;
+        }
+        $cuota = Cuota::find($this->contactCuotaId);
+        $phone = $cuota?->operacion?->cliente?->telefono;
+        if ($phone && $this->contactPreviewMessage) {
+            $service = app(MessageTemplateService::class);
+            $this->contactWhatsappUrl = $service->getWhatsappUrl($phone, $this->contactPreviewMessage);
+        } else {
+            $this->contactWhatsappUrl = '';
+        }
+    }
+
+    public function submitContactGestion()
+    {
+        $this->validate([
+            'contactPreviewMessage' => 'required|string',
+        ]);
+
+        $service = app(GestionService::class);
+        $service->registrarGestion([
+            'cuota_id' => $this->contactCuotaId,
+            'user_id' => auth()->id() ?? 1,
+            'tipo' => 'whatsapp_enviado',
+            'resultado' => 'mensaje_enviado',
+            'observacion' => 'Mensaje de cobranza enviado: ' . mb_substr($this->contactPreviewMessage, 0, 100) . '...',
+        ]);
+
+        $this->showContactModal = false;
+        session()->flash('success', 'Gestión de contacto registrada correctamente.');
+    }
+
+    public function getContactPlantillasProperty()
+    {
+        $query = PlantillaMensaje::where('activo', true);
+        if ($this->contactSelectedCategoria) {
+            $query->where('categoria', $this->contactSelectedCategoria);
+        }
+        return $query->get();
+    }
+
+    public function getContactCuotaProperty()
+    {
+        return $this->contactCuotaId ? Cuota::find($this->contactCuotaId) : null;
     }
 
     /**

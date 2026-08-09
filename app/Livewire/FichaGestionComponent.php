@@ -13,6 +13,7 @@ use App\Services\GestionService;
 use App\Services\PromesaPagoService;
 use App\Services\VisitaCobradorService;
 use App\Services\PagoService;
+use App\Services\MessageTemplateService;
 use Carbon\Carbon;
 
 class FichaGestionComponent extends Component
@@ -54,8 +55,10 @@ class FichaGestionComponent extends Component
     public $visita_fecha_realizada = '';
 
     // Message templates
+    public $selectedCategoria = '';
     public $selectedPlantillaId = '';
     public $previewMensaje = '';
+    public $warnings = [];
 
     public function mount($cuotaId)
     {
@@ -72,6 +75,39 @@ class FichaGestionComponent extends Component
         // Initialize nullable dates to null (per memory guidelines)
         $this->gestion_proxima_accion_fecha = null;
         $this->visita_fecha_realizada = null;
+
+        // Auto-suggest template based on current state
+        $this->autoSuggestTemplate();
+    }
+
+    public function autoSuggestTemplate()
+    {
+        $cuota = $this->cuota;
+        $service = app(MessageTemplateService::class);
+        $suggestedCategory = $service->suggestCategoryForCuota($cuota);
+
+        $this->selectedCategoria = $suggestedCategory;
+
+        $suggestedTemplate = PlantillaMensaje::where('activo', true)
+            ->where('categoria', $suggestedCategory)
+            ->first();
+
+        if ($suggestedTemplate) {
+            $this->selectedPlantillaId = $suggestedTemplate->id;
+            $parsed = $service->parseTemplate($suggestedTemplate->cuerpo, $cuota);
+            $this->previewMensaje = $parsed['text'];
+            $this->warnings = $parsed['warnings'];
+        } else {
+            // Find any active template as fallback
+            $fallback = PlantillaMensaje::where('activo', true)->first();
+            if ($fallback) {
+                $this->selectedPlantillaId = $fallback->id;
+                $this->selectedCategoria = $fallback->categoria;
+                $parsed = $service->parseTemplate($fallback->cuerpo, $cuota);
+                $this->previewMensaje = $parsed['text'];
+                $this->warnings = $parsed['warnings'];
+            }
+        }
     }
 
     public function getCuotaProperty()
@@ -408,44 +444,47 @@ class FichaGestionComponent extends Component
 
     public function getPlantillasProperty()
     {
-        return PlantillaMensaje::where('activo', true)->get();
+        $query = PlantillaMensaje::where('activo', true);
+        if ($this->selectedCategoria) {
+            $query->where('categoria', $this->selectedCategoria);
+        }
+        return $query->get();
+    }
+
+    public function updatedSelectedCategoria($value)
+    {
+        $this->selectedPlantillaId = '';
+        $this->previewMensaje = '';
+        $this->warnings = [];
     }
 
     public function updatedSelectedPlantillaId($value)
     {
         if (!$value) {
             $this->previewMensaje = '';
+            $this->warnings = [];
             return;
         }
 
         $plantilla = PlantillaMensaje::find($value);
         if ($plantilla) {
-            $this->previewMensaje = $this->replaceTemplateVariables($plantilla->cuerpo);
+            $service = app(MessageTemplateService::class);
+            $parsed = $service->parseTemplate($plantilla->cuerpo, $this->cuota);
+            $this->previewMensaje = $parsed['text'];
+            $this->warnings = $parsed['warnings'];
         } else {
             $this->previewMensaje = '';
+            $this->warnings = [];
         }
-    }
-
-    protected function replaceTemplateVariables($cuerpo)
-    {
-        $cliente = $this->cuota->operacion->cliente;
-        $replacements = [
-            '{nombre}' => $cliente->nombre . ' ' . $cliente->apellido,
-            '{importe}' => number_format($this->cuota->saldo_pendiente, 2),
-            '{fecha}' => $this->cuota->dia_cobro,
-            '{numero_cuota}' => $this->cuota->numero_cuota,
-            '{link_pago}' => $this->cuota->link_pago ?: 'N/A',
-        ];
-        return str_replace(array_keys($replacements), array_values($replacements), $cuerpo);
     }
 
     public function getWhatsappUrlProperty()
     {
         if (!$this->cuota->operacion->cliente->telefono) {
-            return '#';
+            return '';
         }
-        $phone = preg_replace('/[^0-9]/', '', $this->cuota->operacion->cliente->telefono);
-        return "https://wa.me/{$phone}?text=" . urlencode($this->previewMensaje);
+        $service = app(MessageTemplateService::class);
+        return $service->getWhatsappUrl($this->cuota->operacion->cliente->telefono, $this->previewMensaje);
     }
 
     public function render()
