@@ -36,3 +36,7 @@ Route::get('/ficha-gestion/{cuotaId}', function ($cuotaId) {
 Route::get('/agenda', function () {
     return view('agenda');
 })->name('agenda');
+
+Route::get('/mensajes', function () {
+    return view('mensajes');
+})->name('mensajes');

@@ -206,6 +206,7 @@
                                 </div>
                                 <div class="flex flex-wrap gap-1.5 pt-2">
                                     <a href="/ficha-gestion/{{ $cuota->id }}" class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded shadow">Ver Ficha</a>
+                                    <button wire:click="openContactModal({{ $cuota->id }})" class="px-2.5 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded shadow">✉️ Contactar</button>
                                     <button wire:click="openGestionModal({{ $cuota->id }})" class="px-2.5 py-1 bg-gray-600 text-white text-xs font-bold rounded shadow">Gestión</button>
                                     <button wire:click="openPromesaModal({{ $cuota->id }})" class="px-2.5 py-1 bg-indigo-600 text-white text-xs font-bold rounded shadow">Promesa</button>
                                     <button wire:click="openCobradorModal({{ $cuota->id }})" class="px-2.5 py-1 bg-amber-500 text-white text-xs font-bold rounded shadow">Cobrador</button>
@@ -276,6 +277,7 @@
                                         <td class="p-4 text-center">
                                             <div class="flex flex-wrap justify-center gap-1.5">
                                                 <a href="/ficha-gestion/{{ $cuota->id }}" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded shadow">🔍 Ficha</a>
+                                                <button wire:click="openContactModal({{ $cuota->id }})" class="px-2 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded shadow">✉️ Contactar</button>
                                                 <button wire:click="openGestionModal({{ $cuota->id }})" class="px-2 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs font-bold rounded shadow">📝 Gestión</button>
                                                 <button wire:click="openPromesaModal({{ $cuota->id }})" class="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded shadow">🤝 Promesa</button>
                                                 <button wire:click="openCobradorModal({{ $cuota->id }})" class="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded shadow">🚴 Cobrador</button>
@@ -695,11 +697,11 @@
                             <div class="grid grid-cols-2 gap-4">
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Próxima Acción (opcional)</label>
-                                    <input wire:model="gestion_proxima_accion" type="text" class="mt-1 block w-full rounded-md border-gray-300 dark:bg-gray-700 dark:text-white" placeholder="Ej: Volver a llamar">
+                                    <input wire:model="gestion_proxima_accion" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white" placeholder="Ej: Volver a llamar">
                                 </div>
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Fecha Próxima Acción</label>
-                                    <input wire:model="gestion_proxima_accion_fecha" type="date" class="mt-1 block w-full rounded-md border-gray-300 dark:bg-gray-700 dark:text-white">
+                                    <input wire:model="gestion_proxima_accion_fecha" type="date" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white">
                                 </div>
                             </div>
                             <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
@@ -719,7 +721,7 @@
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Monto Prometido</label>
-                                <input wire:model="promesa_monto_prometido" type="number" step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white">
+                                <input wire:model="promesa_monto_prometido" type="number" step="0.01" class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white">
                                 @error('promesa_monto_prometido') <span class="text-xs text-red-500">{{ $message }}</span> @enderror
                             </div>
                             <div>
@@ -753,7 +755,7 @@
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Observaciones</label>
-                                <textarea wire:model="cobrador_observaciones" rows="3" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white" placeholder="Indicaciones para el domicilio..."></textarea>
+                                <textarea wire:model="cobrador_observaciones" rows="3" class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white" placeholder="Indicaciones para el domicilio..."></textarea>
                             </div>
                             <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
                                 <button type="button" wire:click="closeModal" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">Cancelar</button>
@@ -801,7 +803,7 @@
                         <form wire:submit.prevent="submitVisitaResultado" class="space-y-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Resultado de la Visita</label>
-                                <select wire:model="visita_resultado_tipo" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white">
+                                <select wire:model="visita_resultado_tipo" class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white">
                                     <option value="cobrado">Cobrado</option>
                                     <option value="cobrado_parcialmente">Cobrado parcialmente</option>
                                     <option value="no_estaba">No estaba</option>
@@ -823,13 +825,106 @@
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Observaciones</label>
-                                <textarea wire:model="visita_observaciones" rows="3" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white" placeholder="Detalles de la visita..."></textarea>
+                                <textarea wire:model="visita_observaciones" rows="3" class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white" placeholder="Detalles de la visita..."></textarea>
                             </div>
                             <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
                                 <button type="button" wire:click="closeModal" class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">Cancelar</button>
                                 <button type="submit" class="px-4 py-2 rounded-md text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700">Guardar Resultado</button>
                             </div>
                         </form>
+                    @endif
+                </div>
+            </div>
+        </div>
+    @endif
+
+    <!-- MODAL OVERLAY: CONTACTAR CLIENTE (INTEGRATION WITH AGENDA) -->
+    @if($showContactModal)
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm" wire:key="contact-modal-agenda">
+            <div class="relative w-full max-w-2xl bg-white dark:bg-gray-800 rounded-xl shadow-xl overflow-hidden border border-gray-100 dark:border-gray-700">
+                <div class="flex justify-between items-center px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-700">
+                    <h3 class="text-lg font-bold text-gray-900 dark:text-white">✉️ Contactar Cliente desde Agenda</h3>
+                    <button wire:click="$set('showContactModal', false)" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                </div>
+
+                <div class="p-6 space-y-4">
+                    @if($this->contactCuota)
+                        <div class="bg-gray-50 dark:bg-gray-700/50 p-3 rounded-lg border text-xs flex justify-between items-center">
+                            <div>
+                                <span class="block font-bold text-gray-900 dark:text-white">{{ $this->contactCuota->operacion->cliente->nombre }} {{ $this->contactCuota->operacion->cliente->apellido }}</span>
+                                <span class="text-gray-500">Tel: {{ $this->contactCuota->operacion->cliente->telefono ?: 'Sin teléfono' }}</span>
+                            </div>
+                            <span class="text-xs font-mono bg-indigo-50 dark:bg-indigo-950 px-2 py-1 rounded text-indigo-700">Sol. #{{ $this->contactCuota->operacion->numero_solicitud }} (Cuota {{ $this->contactCuota->numero_cuota }})</span>
+                        </div>
+                    @endif
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-[10px] font-semibold text-gray-400 mb-1 uppercase">Categoría</label>
+                            <select wire:model.live="contactSelectedCategoria" class="w-full text-xs p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                                <option value="">Todas</option>
+                                <option value="proximo_vencimiento">Próximo vencimiento</option>
+                                <option value="vence_hoy">Vence hoy</option>
+                                <option value="cuota_vencida">Cuota vencida</option>
+                                <option value="link_pago">Link de pago</option>
+                                <option value="promesa_pago">Promesa de pago</option>
+                                <option value="seguimiento_promesa">Seguimiento promesa</option>
+                                <option value="cobrador">Cobrador</option>
+                                <option value="sin_respuesta">Sin respuesta</option>
+                                <option value="pago_pendiente">Pago pendiente</option>
+                                <option value="pago_parcial">Pago parcial</option>
+                                <option value="recordatorio_pago">Recordatorio pago</option>
+                                <option value="seguimiento_general">Seguimiento general</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-[10px] font-semibold text-gray-400 mb-1 uppercase">Plantilla</label>
+                            <select wire:model.live="contactSelectedPlantillaId" class="w-full text-xs p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                                <option value="">Seleccione una...</option>
+                                @foreach($this->contactPlantillas as $plantilla)
+                                    <option value="{{ $plantilla->id }}">{{ $plantilla->titulo }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                    </div>
+
+                    @if(!empty($contactWarnings))
+                        <div class="space-y-1">
+                            @foreach($contactWarnings as $warn)
+                                <div class="bg-amber-50 dark:bg-amber-950/20 border-l-2 border-amber-500 p-2 text-[10px] text-amber-800 dark:text-amber-400 font-medium">
+                                    ⚠️ {{ $warn }}
+                                </div>
+                            @endforeach
+                        </div>
+                    @endif
+
+                    @if($contactPreviewMessage)
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-400 mb-1">✍️ Personalizar Mensaje (Modificación manual)</label>
+                            <textarea wire:model.live="contactPreviewMessage" rows="6" class="w-full text-xs p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-medium focus:border-indigo-500 focus:ring-indigo-500 leading-relaxed"></textarea>
+                        </div>
+
+                        <div class="flex flex-wrap gap-2 justify-between items-center pt-4 border-t">
+                            <div class="flex gap-2">
+                                <button onclick="navigator.clipboard.writeText($wire.contactPreviewMessage); alert('¡Mensaje copiado al portapapeles!')" class="inline-flex justify-center items-center gap-1.5 px-3 py-2 text-xs font-bold text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition shadow-sm">
+                                    📋 Copiar
+                                </button>
+                                @if($contactWhatsappUrl)
+                                    <a href="{{ $contactWhatsappUrl }}" target="_blank" class="inline-flex justify-center items-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-green-500 rounded-lg hover:bg-green-600 transition shadow">
+                                        💬 WhatsApp
+                                    </a>
+                                @else
+                                    <span class="inline-flex justify-center items-center p-2 text-[10px] font-semibold text-red-800 bg-red-50 rounded-lg">
+                                        ❌ Sin teléfono válido
+                                    </span>
+                                @endif
+                            </div>
+
+                            <button wire:click="submitContactGestion" class="inline-flex justify-center items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition shadow">
+                                📝 Registrar Gestión
+                            </button>
+                        </div>
                     @endif
                 </div>
             </div>
