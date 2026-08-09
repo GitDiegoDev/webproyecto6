@@ -4,7 +4,7 @@
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
 
-        <title>Dashboard - Gestor de Cobranzas</title>
+        <title>Agenda de Cobranza - Gestor de Cobranzas</title>
 
         @fonts
         @vite(['resources/css/app.css', 'resources/js/app.js'])
@@ -22,8 +22,8 @@
                     </a>
                 </div>
                 <div class="text-xs text-gray-500 dark:text-gray-400 font-medium flex items-center gap-4">
-                    <a href="/dashboard" class="text-indigo-600 dark:text-indigo-400 hover:underline font-semibold">Dashboard</a>
-                    <a href="/agenda" class="text-gray-600 dark:text-gray-300 hover:underline">Agenda</a>
+                    <a href="/dashboard" class="text-gray-600 dark:text-gray-300 hover:underline">Dashboard</a>
+                    <a href="/agenda" class="text-indigo-600 dark:text-indigo-400 hover:underline font-semibold">Agenda</a>
                     <a href="/importar" class="text-gray-600 dark:text-gray-300 hover:underline">Importar Planilla</a>
                     <span class="border-l border-gray-300 dark:border-gray-600 h-4 inline-block mx-2"></span>
                     <span>v{{ app()->version() }}</span>
@@ -33,7 +33,7 @@
 
         <!-- Main Content -->
         <main class="flex-1 max-w-7xl w-full mx-auto px-6 py-8">
-            <livewire:dashboard-component />
+            <livewire:agenda-cobranza-component />
         </main>
 
         <!-- Footer -->

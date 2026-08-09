@@ -32,3 +32,7 @@ Route::get('/importar', function () {
 Route::get('/ficha-gestion/{cuotaId}', function ($cuotaId) {
     return view('ficha', ['cuotaId' => $cuotaId]);
 })->name('ficha-gestion');
+
+Route::get('/agenda', function () {
+    return view('agenda');
+})->name('agenda');

@@ -22,7 +22,10 @@
                     </a>
                 </div>
                 <div class="text-xs text-gray-500 dark:text-gray-400 font-medium flex items-center gap-4">
-                    <a href="/" class="text-indigo-600 dark:text-indigo-400 hover:underline">Inicio</a>
+                    <a href="/dashboard" class="text-gray-600 dark:text-gray-300 hover:underline">Dashboard</a>
+                    <a href="/agenda" class="text-gray-600 dark:text-gray-300 hover:underline">Agenda</a>
+                    <a href="/importar" class="text-indigo-600 dark:text-indigo-400 hover:underline font-semibold">Importar Planilla</a>
+                    <span class="border-l border-gray-300 dark:border-gray-600 h-4 inline-block mx-2"></span>
                     <span>v{{ app()->version() }}</span>
                 </div>
             </div>
