@@ -40,3 +40,7 @@ Route::get('/agenda', function () {
 Route::get('/mensajes', function () {
     return view('mensajes');
 })->name('mensajes');
+
+Route::get('/cobrador', function () {
+    return view('cobrador');
+})->name('cobrador');
