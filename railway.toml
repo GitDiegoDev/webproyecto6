@@ -1,0 +1,9 @@
+# Configuration for Railway Deployment (https://docs.railway.com/config-as-code)
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+# Optimizations and migrations run before the container starts
+preDeployCommand = "php artisan migrate --force && php artisan config:cache && php artisan route:cache && php artisan view:cache"
+restartPolicyType = "on-failure"
