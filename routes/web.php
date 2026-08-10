@@ -44,3 +44,7 @@ Route::get('/mensajes', function () {
 Route::get('/cobrador', function () {
     return view('cobrador');
 })->name('cobrador');
+
+Route::get('/recaudacion', function () {
+    return view('recaudacion');
+})->name('recaudacion');
